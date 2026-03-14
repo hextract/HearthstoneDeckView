@@ -1,4 +1,5 @@
-import grequests
+from concurrent.futures import ThreadPoolExecutor
+
 import requests
 
 from db.config import FOLDER
@@ -21,8 +22,14 @@ class GRequestsDownloader:
         for response, card in zip(responses, cards):
             self.save_photo(card["slug"], response, card["name"], card["image"])
 
-    def process_cards(self, cards):
-        methods = (grequests.get(card["image"]) for card in cards)
-        response = grequests.map(methods)
+    def _fetch(self, url):
+        try:
+            return requests.get(url)
+        except:
+            return None
 
-        self.get_and_save_photos(response, cards)
+    def process_cards(self, cards):
+        with ThreadPoolExecutor() as executor:
+            responses = list(executor.map(self._fetch, (card["image"] for card in cards)))
+
+        self.get_and_save_photos(responses, cards)
