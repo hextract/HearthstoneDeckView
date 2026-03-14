@@ -2,8 +2,6 @@ import datetime
 import os
 import random
 
-from patch import *
-
 import discord
 from discord import app_commands
 from discord.ext import commands
