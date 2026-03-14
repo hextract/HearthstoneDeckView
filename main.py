@@ -9,9 +9,12 @@ from discord.ext import commands
 from db.config import TOKEN
 from image_creator import create_picture
 
+intents = discord.Intents.default()
+intents.message_content = True
+
 client = commands.Bot(command_prefix="/",
                       activity=discord.Game(name="Analyzing decks"),
-                      intents=discord.Intents.default())
+                      intents=intents)
 
 
 async def generate_and_save(deck_code):
