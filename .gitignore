@@ -2,18 +2,20 @@
 .idea
 
 .env
+.vkbottle/
 
 venv/
 env/
+.venv/
 
 cards/
-
-
-test/
-test.py
-tests/
-test.png
 
 __pycache__/
 *.py[cod]
 *$py.class
+
+dist/
+
+.DS_Store
+/test.py
+/test.png

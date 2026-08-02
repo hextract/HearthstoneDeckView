@@ -1,21 +1,57 @@
-[tool.poetry]
-name = "deck-view-ds"
-version = "0.1.0"
-description = ""
-authors = ["h4x4d <cleanyboom@gmail.com>"]
+[project]
+name = "deckview"
+version = "0.3.0"
+description = "Multi-platform bot that renders Hearthstone deck images"
 readme = "README.md"
-packages = [{include = "deck_view_ds"}]
+requires-python = ">=3.12,<4.0"
+authors = [
+    { name = "h4x4d", email = "cleanyboom@gmail.com" },
+]
+dependencies = [
+    "certifi>=2026.7.22",
+    "pillow>=12.3.0,<13",
+    "python-dotenv>=1.2.2,<2",
+    "requests>=2.34.2,<3",
+]
 
-[tool.poetry.dependencies]
-python = "^3.10"
-discord-py = "^2.3.1"
-requests = "^2.31.0"
-grequests = "^0.7.0"
-numpy = "^1.25.1"
-pillow = "^10.0.0"
-python-dotenv = "^1.0.0"
+[project.optional-dependencies]
+vk = [
+    "loguru>=0.7.3,<0.8",
+    "vkbottle>=4.10.0,<5",
+]
+tg = [
+    "aiogram>=3.0,<4",
+]
+ds = [
+    "discord.py>=2.3,<3",
+]
 
+[project.scripts]
+deckview = "deckview.cli:main"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "deckview",
+    "backs",
+    "death_knight",
+    "labels",
+    "zilliax",
+    "belwe.ttf",
+    "main.py",
+    "README.md",
+    "LICENSE",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["deckview"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"backs" = "backs"
+"death_knight" = "death_knight"
+"labels" = "labels"
+"zilliax" = "zilliax"
+"belwe.ttf" = "belwe.ttf"
