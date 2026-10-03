@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import tempfile
@@ -21,6 +22,9 @@ file_uploader = DocMessagesUploader(bot.api)
 
 logger.remove()
 logger.add(sys.stderr, level="ERROR", backtrace=False, diagnose=False)
+
+UPLOAD_ATTEMPTS = 4
+UPLOAD_RETRY_DELAY = 0.5
 
 
 def _forwarded_text(message):
@@ -64,7 +68,22 @@ async def start_handler(message: Message):
         )
 
 
-async def _upload_photo(image_path, message):
+async def _retry_upload(operation):
+    """Retry VK's two-phase upload with a fresh upload URL each time."""
+    for attempt in range(UPLOAD_ATTEMPTS):
+        try:
+            return await operation()
+        except VKAPIError[10]:
+            raise
+        except Exception:
+            if attempt == UPLOAD_ATTEMPTS - 1:
+                raise
+            await asyncio.sleep(UPLOAD_RETRY_DELAY * 2**attempt)
+
+    raise RuntimeError("VK upload retry loop ended unexpectedly")
+
+
+async def _upload_photo_once(image_path, message):
     try:
         return await photo_uploader.upload(
             file_source=image_path,
@@ -75,6 +94,20 @@ async def _upload_photo(image_path, message):
             file_source=image_path,
             peer_id=message.from_id,
         )
+
+
+async def _upload_photo(image_path, message):
+    return await _retry_upload(lambda: _upload_photo_once(image_path, message))
+
+
+async def _upload_document(image_path, deck_code, message):
+    return await _retry_upload(
+        lambda: file_uploader.upload(
+            title=f"{deck_code}.png",
+            file_source=image_path,
+            peer_id=message.peer_id,
+        )
+    )
 
 
 async def _handle_deck_code(deck_code, message):
@@ -106,12 +139,11 @@ async def _handle_deck_code(deck_code, message):
 
         await message.answer(attachment=str(photo))
         if message.peer_id < 2_000_000_000:
-            document = await file_uploader.upload(
-                title=f"{deck_code}.png",
-                file_source=image_path,
-                peer_id=message.peer_id,
-            )
-            await message.answer(attachment=str(document))
+            try:
+                document = await _upload_document(image_path, deck_code, message)
+                await message.answer(attachment=str(document))
+            except Exception:
+                logger.exception("Failed to upload deck document")
         logger.info("Processed deck in {:.3f}s", perf_counter() - started)
         return None
     finally:
