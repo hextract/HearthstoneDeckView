@@ -4,18 +4,36 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+from io import BytesIO
 from pathlib import Path
 
 import certifi
 import requests
+from PIL import Image
 
 from .config import CARDS_DIR
+
+
+@lru_cache(maxsize=1)
+def _card_ids():
+    response = requests.get(
+        "https://api.hearthstonejson.com/v1/latest/enUS/cards.json",
+        timeout=20,
+        verify=certifi.where(),
+    )
+    response.raise_for_status()
+    return {
+        card["dbfId"]: card["id"]
+        for card in response.json()
+    }
 
 
 class CardImageCache:
     _executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="card-download")
     _path_locks = {}
     _path_locks_guard = threading.Lock()
+    _card_ids_lock = threading.Lock()
 
     def __init__(self, directory=CARDS_DIR, timeout=20):
         self.directory = Path(directory)
@@ -27,16 +45,17 @@ class CardImageCache:
         return self.directory / f"{slug}.png"
 
     @staticmethod
-    def _is_cached(path):
+    def _is_cached(path, card=None):
         try:
-            return path.is_file() and path.stat().st_size > 0
+            if not path.is_file() or path.stat().st_size == 0:
+                return False
+            if card and card.get("cardTypeId") == 3 and card.get("collectible"):
+                return path.with_suffix(".hero-render-v1").is_file()
+            return True
         except OSError:
             return False
 
-    def _fetch(self, card):
-        urls = list(dict.fromkeys(
-            url for url in (card.get("image"), card.get("imageGold")) if url
-        ))
+    def _fetch_urls(self, urls, validate=False):
         last_error = None
         for url in urls:
             for attempt in range(4):
@@ -50,12 +69,41 @@ class CardImageCache:
                     response.raise_for_status()
                     if not response.content:
                         raise ValueError("Empty image response")
+                    if validate:
+                        with Image.open(BytesIO(response.content)) as image:
+                            image.verify()
                     return response.content
-                except (requests.RequestException, ValueError) as error:
+                except (requests.RequestException, ValueError, OSError) as error:
                     last_error = error
                     if attempt < 3:
                         time.sleep(0.5 * 2 ** attempt)
-        raise RuntimeError(f"Could not download card {card['slug']}") from last_error
+        raise RuntimeError("Could not download card image") from last_error
+
+    def _fetch_render(self, card):
+        with self._card_ids_lock:
+            card_id = _card_ids().get(card.get("id"))
+        if not card_id:
+            raise ValueError(f"No full card render for {card.get('id')}")
+        return self._fetch_urls([
+            "https://art.hearthstonejson.com/v1/render/latest/enUS/512x/"
+            f"{card_id}.png"
+        ], validate=True)
+
+    def _fetch(self, card):
+        is_hero = card.get("cardTypeId") == 3 and card.get("collectible")
+        if not is_hero:
+            urls = list(dict.fromkeys(
+                url for url in (card.get("image"), card.get("imageGold")) if url
+            ))
+            if urls:
+                try:
+                    return self._fetch_urls(urls)
+                except RuntimeError:
+                    pass
+        try:
+            return self._fetch_render(card)
+        except (requests.RequestException, ValueError, RuntimeError, OSError) as error:
+            raise RuntimeError(f"Could not download card {card['slug']}") from error
 
     def _publish(self, card, target):
         content = self._fetch(card)
@@ -73,6 +121,8 @@ class CardImageCache:
                 temporary.flush()
                 os.fsync(temporary.fileno())
             os.replace(temporary_name, target)
+            if card.get("cardTypeId") == 3 and card.get("collectible"):
+                target.with_suffix(".hero-render-v1").touch()
         finally:
             if temporary_name:
                 try:
@@ -85,7 +135,7 @@ class CardImageCache:
         with self._path_locks_guard:
             path_lock = self._path_locks.setdefault(target, threading.Lock())
         with path_lock:
-            if not self._is_cached(target):
+            if not self._is_cached(target, card):
                 self._publish(card, target)
 
     def populate(self, cards):
@@ -94,7 +144,7 @@ class CardImageCache:
         missing = [
             card
             for card in unique_cards.values()
-            if not self._is_cached(self._path_for(card["slug"]))
+            if not self._is_cached(self._path_for(card["slug"]), card)
         ]
         futures = [self._executor.submit(self._cache_card, card) for card in missing]
         for future in futures:
